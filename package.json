@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-collabin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "n8n community node for Collabin — manage leave requests, users, teams and calendars via the Collabin API, with a webhook trigger for real-time leave events.",
   "keywords": [
     "n8n-community-node-package",

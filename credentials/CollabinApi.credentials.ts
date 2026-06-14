@@ -27,10 +27,9 @@ export class CollabinApi implements ICredentialType {
 			displayName: 'Base URL',
 			name: 'baseUrl',
 			type: 'string',
-			default: 'https://app.collabin.eu',
+			default: 'https://api.collabin.eu',
 			required: true,
-			description:
-				'The base URL of your Collabin instance, without a trailing slash or "/v1" suffix',
+			description: 'The base URL of the Collabin API, without a trailing slash or "/v1" suffix',
 		},
 	];
 

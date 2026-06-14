@@ -39,7 +39,7 @@ The **Collabin** node authenticates with an **API key**, sent as the `X-API-Key`
 | Field | Value |
 |---|---|
 | API Key | Your `clb_...` key |
-| Base URL | `https://app.collabin.eu` (default — collabin.eu is the primary domain) |
+| Base URL | `https://api.collabin.eu` (default — collabin.eu is the primary domain) |
 
 Use the **Test** button to verify the credential — it calls `GET /v1/leave-types`.
 
