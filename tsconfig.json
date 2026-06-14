@@ -14,8 +14,7 @@
     "outDir": "./dist",
     "declaration": true,
     "sourceMap": true,
-    "skipLibCheck": true,
-    "incremental": true
+    "skipLibCheck": true
   },
   "include": ["credentials/**/*", "nodes/**/*", "package.json"],
   "exclude": ["dist/**/*", "node_modules/**/*"]

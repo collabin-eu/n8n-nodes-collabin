@@ -105,8 +105,9 @@ export class CollabinTrigger implements INodeType {
 		const event = bodyData.event as string | undefined;
 
 		if (event && events.length > 0 && !events.includes(event)) {
-			// Acknowledge the delivery so Collabin does not retry, but skip the workflow run.
-			return { noWebhookResponse: true };
+			// No `workflowData` and `noWebhookResponse` left unset: n8n sends its default
+			// "received" response (onReceived mode) and skips the workflow run.
+			return {};
 		}
 
 		return {
