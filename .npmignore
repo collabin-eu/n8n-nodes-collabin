@@ -1,0 +1,10 @@
+nodes/**/*.ts
+credentials/**/*.ts
+gulpfile.js
+tsconfig.json
+tsconfig.tsbuildinfo
+.eslintrc.js
+.eslintrc.prepublish.js
+.prettierrc.js
+.editorconfig
+*.tsbuildinfo
