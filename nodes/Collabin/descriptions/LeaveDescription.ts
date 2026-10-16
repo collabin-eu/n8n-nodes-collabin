@@ -28,7 +28,7 @@ export const leaveOperations: INodeProperties[] = [
 				name: 'Create',
 				value: 'create',
 				description:
-					'Create a new leave request (status PENDING). Requires a write-permission API key.',
+					'Create a new leave request (status PENDING). Requires a write-permission API key. Fails with 422 QUOTA_EXCEEDED when a blocking leave quota would be exceeded.',
 				action: 'Create a leave',
 			},
 			{
@@ -195,7 +195,7 @@ export const leaveFields: INodeProperties[] = [
 				operation: ['create'],
 			},
 		},
-		description: 'First day of the leave request',
+		description: 'First day of the leave request. Only the calendar date is used.',
 	},
 	{
 		displayName: 'End Date',
@@ -209,7 +209,7 @@ export const leaveFields: INodeProperties[] = [
 				operation: ['create'],
 			},
 		},
-		description: 'Last day of the leave request',
+		description: 'Last day of the leave request. Only the calendar date is used.',
 	},
 	{
 		displayName: 'Additional Fields',
@@ -229,7 +229,8 @@ export const leaveFields: INodeProperties[] = [
 				name: 'isHalfDay',
 				type: 'boolean',
 				default: false,
-				description: 'Whether this is a half-day (AM/PM) request',
+				description:
+					'Whether this is a half-day (AM/PM) request. A half day must start and end on the same day.',
 			},
 			{
 				displayName: 'Reason',

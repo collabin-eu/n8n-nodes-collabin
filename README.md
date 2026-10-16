@@ -56,10 +56,10 @@ Every "Get Many" operation supports:
 | User | Get Leaves | `GET /v1/users/:id/leaves` | Read | Optional filter: status |
 | Team | Get | `GET /v1/teams/:id` | Read | Includes leaders and members |
 | Team | Get Many | `GET /v1/teams` | Read | |
-| Leave Type | Get Many | `GET /v1/leave-types` | Read | |
+| Leave Type | Get Many | `GET /v1/leave-types` | Read | Includes each type's quota rules (period, default quota, blocking, deducting types) and minimum notice |
 | Leave | Get | `GET /v1/leaves/:id` | Read | |
 | Leave | Get Many | `GET /v1/leaves` | Read | Filters: User ID, Status, Start/End Date, Updated Since (for incremental sync) |
-| Leave | Create | `POST /v1/leaves` | **Write** | Creates a request with status `PENDING` |
+| Leave | Create | `POST /v1/leaves` | **Write** | Creates a request with status `PENDING`; only the calendar dates are used. Returns `422 QUOTA_EXCEEDED` when a blocking leave quota would be exceeded |
 | Leave | Update Status | `PUT /v1/leaves/:id/status` | **Write** | Approve or reject a `PENDING` request; returns `409` if it isn't pending |
 | Calendar | Get | `GET /v1/calendar` | Read | Workday/holiday calendar for a date range (max 366 days) |
 
@@ -124,12 +124,12 @@ The node recomputes this HMAC over the raw body and compares it (constant-time) 
 - **Notify on new leave requests** — `Collabin Trigger` (`leave.created`) → `Slack`/`Microsoft Teams`/`Email` node, notifying the approver.
 - **Approve/reject from an external tool** — any trigger → `Collabin` node (Leave → Update Status) to approve or reject a `PENDING` request from a ticketing system, chatbot, or internal tool.
 - **Incremental payroll/HRIS sync** — `Schedule Trigger` → `Collabin` node (Leave → Get Many, `Updated Since` = last run time, `Return All`) → push changes to an external payroll system.
-- **AI agent tool** — add the **Collabin** node as a tool on an `AI Agent` node so it can look up users, teams, or leave balances when answering questions.
+- **AI agent tool** — add the **Collabin** node as a tool on an `AI Agent` node so it can look up users, teams, leave types and leave requests when answering questions, or record a leave request.
 
 ## Compatibility
 
 - Node.js >= 20.15
-- Collabin API version: **v1.2** (`GET /v1/calendar`, pagination + `updated_since` on all list endpoints)
+- Collabin API version: **v1.3** (leave type quota rules and minimum notice, `422 QUOTA_EXCEEDED` on `POST /v1/leaves`); earlier versions keep working
 
 ## Development
 

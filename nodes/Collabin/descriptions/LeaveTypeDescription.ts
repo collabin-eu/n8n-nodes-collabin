@@ -15,7 +15,8 @@ export const leaveTypeOperations: INodeProperties[] = [
 			{
 				name: 'Get Many',
 				value: 'getAll',
-				description: 'Get many leave types',
+				description:
+					'Get many leave types with their quota rules (period, default quota, blocking, deducting types) and minimum notice',
 				action: 'Get many leave types',
 			},
 		],

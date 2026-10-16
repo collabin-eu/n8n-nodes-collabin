@@ -12,7 +12,13 @@ import { leaveFields, leaveOperations } from './descriptions/LeaveDescription';
 import { leaveTypeFields, leaveTypeOperations } from './descriptions/LeaveTypeDescription';
 import { teamFields, teamOperations } from './descriptions/TeamDescription';
 import { userFields, userOperations } from './descriptions/UserDescription';
-import { collabinApiRequest, collabinApiRequestAllItems, toDateOnly } from './GenericFunctions';
+import {
+	collabinApiRequest,
+	collabinApiRequestAllItems,
+	toDateOnly,
+	toLeaveDay,
+	toRfc3339,
+} from './GenericFunctions';
 
 export class Collabin implements INodeType {
 	description: INodeTypeDescription = {
@@ -188,11 +194,14 @@ export class Collabin implements INodeType {
 						const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
 						const qs: IDataObject = { ...filters };
 
-						if (typeof qs.start === 'string' && qs.start) {
+						if (qs.start) {
 							qs.start = toDateOnly(qs.start);
 						}
-						if (typeof qs.end === 'string' && qs.end) {
+						if (qs.end) {
 							qs.end = toDateOnly(qs.end);
+						}
+						if (qs.updated_since) {
+							qs.updated_since = toRfc3339(qs.updated_since, this.getTimezone());
 						}
 
 						if (returnAll) {
@@ -211,8 +220,8 @@ export class Collabin implements INodeType {
 					} else if (operation === 'create') {
 						const userId = this.getNodeParameter('userId', i) as number;
 						const leaveTypeId = this.getNodeParameter('leaveTypeId', i) as number;
-						const startDate = this.getNodeParameter('startDate', i) as string;
-						const endDate = this.getNodeParameter('endDate', i) as string;
+						const startDate = this.getNodeParameter('startDate', i);
+						const endDate = this.getNodeParameter('endDate', i);
 						const additionalFields = this.getNodeParameter(
 							'additionalFields',
 							i,
@@ -222,8 +231,8 @@ export class Collabin implements INodeType {
 						const body: IDataObject = {
 							user_id: userId,
 							leave_type_id: leaveTypeId,
-							start_date: startDate,
-							end_date: endDate,
+							start_date: toLeaveDay(startDate),
+							end_date: toLeaveDay(endDate),
 							is_half_day: additionalFields.isHalfDay ?? false,
 						};
 
