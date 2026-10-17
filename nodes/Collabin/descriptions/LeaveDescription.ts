@@ -278,4 +278,22 @@ export const leaveFields: INodeProperties[] = [
 		},
 		description: 'Reason shown to the employee when rejecting the leave request',
 	},
+
+	// ----------------------------------------
+	//        leave: create / updateStatus
+	// ----------------------------------------
+	{
+		displayName: 'Send Notifications',
+		name: 'notify',
+		type: 'boolean',
+		default: true,
+		displayOptions: {
+			show: {
+				resource: ['leave'],
+				operation: ['create', 'updateStatus'],
+			},
+		},
+		description:
+			'Whether Collabin notifies the people involved, like for a request made in Collabin: the approvers of a new request, or the employee of a decision. Each person gets an in-app notification and an e-mail only if they turned that on in their profile. Turn off e.g. when importing past leave.',
+	},
 ];

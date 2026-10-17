@@ -155,6 +155,26 @@ test('approves or rejects a leave, sending a reason only for rejections', async 
 	assert.deepEqual(reject.requests[0].body, { status: 'REJECTED', rejection_reason: 'Peak season' });
 });
 
+test('turns notifications off only when Send Notifications is off', async () => {
+	const base = { resource: 'leave', operation: 'create', userId: 7, leaveTypeId: 2, startDate: '2026-04-06', endDate: '2026-04-06', additionalFields: {} };
+	const defaulted = await run(base);
+	assert.ok(!('notify' in defaulted.requests[0].body), 'the API notifies by default; older versions do not know the field');
+	const explicitOn = await run({ ...base, notify: true });
+	assert.ok(!('notify' in explicitOn.requests[0].body));
+	const silentCreate = await run({ ...base, notify: false });
+	assert.equal(silentCreate.requests[0].body.notify, false);
+
+	const silentDecision = await run({ resource: 'leave', operation: 'updateStatus', leaveId: 9, status: 'APPROVED', notify: false });
+	assert.deepEqual(silentDecision.requests[0].body, { status: 'APPROVED', notify: false });
+	const silentRejection = await run({ resource: 'leave', operation: 'updateStatus', leaveId: 9, status: 'REJECTED', rejectionReason: 'Peak season', notify: false });
+	assert.deepEqual(silentRejection.requests[0].body, { status: 'REJECTED', rejection_reason: 'Peak season', notify: false });
+
+	const notify = new Collabin().description.properties.find((property) => property.name === 'notify');
+	assert.equal(notify.type, 'boolean');
+	assert.equal(notify.default, true);
+	assert.deepEqual(notify.displayOptions.show, { resource: ['leave'], operation: ['create', 'updateStatus'] });
+});
+
 test('reads the team calendar for a date range', async () => {
 	const { output, requests } = await run(
 		{ resource: 'calendar', operation: 'get', startDate: '2026-04-01T00:00:00', endDate: '2026-04-30T00:00:00' },

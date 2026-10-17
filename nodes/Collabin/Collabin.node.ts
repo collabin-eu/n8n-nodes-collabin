@@ -239,6 +239,11 @@ export class Collabin implements INodeType {
 						if (additionalFields.reason) {
 							body.reason = additionalFields.reason;
 						}
+						// Only sent when turned off: the API notifies by default,
+						// and older Collabin versions do not know the field.
+						if (this.getNodeParameter('notify', i, true) === false) {
+							body.notify = false;
+						}
 
 						responseData = await collabinApiRequest.call(this, 'POST', '/leaves', body);
 					} else if (operation === 'updateStatus') {
@@ -249,6 +254,9 @@ export class Collabin implements INodeType {
 						const body: IDataObject = { status };
 						if (status === 'REJECTED') {
 							body.rejection_reason = rejectionReason;
+						}
+						if (this.getNodeParameter('notify', i, true) === false) {
+							body.notify = false;
 						}
 
 						responseData = await collabinApiRequest.call(

@@ -59,11 +59,13 @@ Every "Get Many" operation supports:
 | Leave Type | Get Many | `GET /v1/leave-types` | Read | Includes each type's quota rules (period, default quota, blocking, deducting types) and minimum notice |
 | Leave | Get | `GET /v1/leaves/:id` | Read | |
 | Leave | Get Many | `GET /v1/leaves` | Read | Filters: User ID, Status, Start/End Date, Updated Since (for incremental sync) |
-| Leave | Create | `POST /v1/leaves` | **Write** | Creates a request with status `PENDING`; only the calendar dates are used. Returns `422 QUOTA_EXCEEDED` when a blocking leave quota would be exceeded |
-| Leave | Update Status | `PUT /v1/leaves/:id/status` | **Write** | Approve or reject a `PENDING` request; returns `409` if it isn't pending |
+| Leave | Create | `POST /v1/leaves` | **Write** | Creates a request with status `PENDING`; only the calendar dates are used. Returns `422 QUOTA_EXCEEDED` when a blocking leave quota would be exceeded. Notifies the approvers unless **Send Notifications** is off |
+| Leave | Update Status | `PUT /v1/leaves/:id/status` | **Write** | Approve or reject a `PENDING` request; returns `409` if it isn't pending. Notifies the employee unless **Send Notifications** is off |
 | Calendar | Get | `GET /v1/calendar` | Read | Workday/holiday calendar for a date range (max 366 days) |
 
 Operations marked **Write** require an API key with Read & Write permission, otherwise the API returns `403 Forbidden`.
+
+**Send Notifications** (Leave → Create and Update Status, on by default): Collabin notifies the people involved, as for a request made in Collabin. The approvers are told about a new request, and the employee about a decision. Each person gets an in-app notification and an e-mail only if they turned that kind of notification on in their profile. The e-mail names your API key as the one who decided. Turn it off, for example, when importing past leave, so nobody is flooded with messages.
 
 ## Collabin Trigger node
 
@@ -129,7 +131,7 @@ The node recomputes this HMAC over the raw body and compares it (constant-time) 
 ## Compatibility
 
 - Node.js >= 20.15
-- Collabin API version: **v1.3** (leave type quota rules and minimum notice, `422 QUOTA_EXCEEDED` on `POST /v1/leaves`); earlier versions keep working
+- Collabin API version: **v1.4** (notifications for leave created or decided through the API, with the `notify` switch); v1.3 and earlier keep working, but they send no notifications and ignore **Send Notifications**
 
 ## Development
 
