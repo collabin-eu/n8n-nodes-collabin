@@ -2,10 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createHmac } = require('node:crypto');
+const { NodeHelpers } = require('n8n-workflow');
 
 const { Collabin } = require('../dist/nodes/Collabin/Collabin.node');
 const { CollabinTrigger } = require('../dist/nodes/Collabin/CollabinTrigger.node');
 const { CollabinApi } = require('../dist/credentials/CollabinApi.credentials');
+const { CollabinWebhookApi } = require('../dist/credentials/CollabinWebhookApi.credentials');
 const { MAX_PAGE_SIZE } = require('../dist/nodes/Collabin/GenericFunctions');
 
 const node = { name: 'Collabin', type: 'n8n-nodes-collabin.collabin', typeVersion: 1, position: [0, 0], parameters: {} };
@@ -240,7 +242,7 @@ test('authenticates with the X-API-Key header and tests against /v1/leave-types'
 });
 
 /** A minimal IWebhookFunctions double. */
-function webhookContext({ secret = 'whsec_test', events = ['leave.created', 'leave.status_changed'], body, rawBody, signature }) {
+function webhookContext({ secret = 'whsec_test', events = ['leave.created', 'leave.status_changed'], body, rawBody, signature, legacySecret, typeVersion = 2, credentialError }) {
 	const response = { statusCode: undefined, payload: undefined };
 	const raw = rawBody === undefined ? Buffer.from(JSON.stringify(body)) : rawBody;
 	return {
@@ -258,7 +260,16 @@ function webhookContext({ secret = 'whsec_test', events = ['leave.created', 'lea
 					return this;
 				},
 			}),
-			getNodeParameter: (name) => ({ signingSecret: secret, events })[name],
+			getNode: () => ({ name: 'Collabin Trigger', typeVersion, parameters: { events, ...(legacySecret === undefined ? {} : { signingSecret: legacySecret }) } }),
+			getNodeParameter: (name) => {
+				assert.equal(name, 'events', 'the trigger must never read a signing key from node parameters');
+				return events;
+			},
+			getCredentials: async (name) => {
+				assert.equal(name, 'collabinWebhookApi');
+				if (credentialError) throw credentialError;
+				return { signingSecret: secret };
+			},
 			getBodyData: () => body,
 			helpers: { returnJsonArray: (data) => [{ json: data }] },
 		},
@@ -321,4 +332,76 @@ test('offers exactly the webhook events Collabin sends', () => {
 	const events = new CollabinTrigger().description.properties.find((property) => property.name === 'events');
 	assert.deepEqual(events.options.map((option) => option.value), ['leave.created', 'leave.status_changed']);
 	assert.deepEqual(events.default, ['leave.created', 'leave.status_changed']);
+});
+
+test('new trigger workflows export only a credential reference, never the signing key', () => {
+	const trigger = new CollabinTrigger();
+	const credential = new CollabinWebhookApi();
+	assert.deepEqual(trigger.description.version, [1, 2]);
+	assert.equal(trigger.description.defaultVersion, 2);
+	assert.deepEqual(trigger.description.credentials, [{ name: credential.name, required: true }]);
+	assert.ok(require('../package.json').n8n.credentials.includes('dist/credentials/CollabinWebhookApi.credentials.js'));
+	assert.equal(credential.properties.find((property) => property.name === 'signingSecret').typeOptions.password, true);
+
+	// Use n8n's actual parameter resolver: version 2 has no secret parameter.
+	const parameters = NodeHelpers.getNodeParameters(trigger.description.properties, {}, true, false, { typeVersion: 2 }, trigger.description);
+	assert.ok(!('signingSecret' in parameters));
+	const workflow = {
+		nodes: [{ type: 'n8n-nodes-collabin.collabinTrigger', typeVersion: 2, parameters,
+			credentials: { collabinWebhookApi: { id: 'credential-7', name: 'Collabin webhook' } } }],
+	};
+	const serialized = JSON.stringify(workflow);
+	assert.ok(!serialized.includes('signingSecret'));
+	assert.deepEqual(JSON.parse(serialized).nodes[0].credentials, { collabinWebhookApi: { id: 'credential-7', name: 'Collabin webhook' } });
+	assert.equal(NodeHelpers.displayParameter({}, trigger.description.properties.find((property) => property.name === 'signingSecret'), { typeVersion: 1 }, trigger.description), true, 'legacy users can clear the stored value before upgrading');
+});
+
+test('legacy plaintext secrets cannot authenticate, even after upgrading or selecting credentials', async () => {
+	const body = { event: 'leave.created' };
+	const raw = Buffer.from(JSON.stringify(body));
+	for (const typeVersion of [1, 2]) {
+		const { context, response } = webhookContext({ body, typeVersion, legacySecret: 'whsec_test', signature: sign('whsec_test', raw) });
+		assert.deepEqual(await new CollabinTrigger().webhook.call(context), { noWebhookResponse: true });
+		assert.equal(response.statusCode, 401);
+		assert.match(response.payload.message, /credential migration required/);
+		assert.ok(!JSON.stringify(response).includes('whsec_test'));
+	}
+});
+
+test('credential-only migration keeps both trigger versions and the event payload compatible', async () => {
+	const body = { event: 'leave.status_changed', delivery_id: 'delivery-1', data: { id: 42, status: 'APPROVED' } };
+	const raw = Buffer.from(JSON.stringify(body));
+	for (const typeVersion of [1, 2]) {
+		const migrated = webhookContext({ body, typeVersion, legacySecret: '', secret: 'whsec_rotated', signature: sign('whsec_rotated', raw) });
+		assert.deepEqual(await new CollabinTrigger().webhook.call(migrated.context), { workflowData: [[{ json: body }]] });
+		const oldKey = webhookContext({ body, typeVersion, legacySecret: '', secret: 'whsec_rotated', signature: sign('whsec_test', raw) });
+		assert.deepEqual(await new CollabinTrigger().webhook.call(oldKey.context), { noWebhookResponse: true });
+		assert.equal(oldKey.response.statusCode, 401);
+	}
+	assert.equal(new CollabinTrigger().description.webhooks[0].path, 'collabin');
+});
+
+test('missing or unavailable credentials fail closed without exposing errors or secrets', async () => {
+	const body = { event: 'leave.created' };
+	const raw = Buffer.from(JSON.stringify(body));
+	for (const options of [{ credentialError: new Error('private credential failure details') }, { secret: null }, { secret: {} }]) {
+		const { context, response } = webhookContext({ body, signature: sign('whsec_test', raw), ...options });
+		assert.deepEqual(await new CollabinTrigger().webhook.call(context), { noWebhookResponse: true });
+		assert.equal(response.statusCode, 401);
+		assert.deepEqual(response.payload, { message: 'Missing or unconfigured webhook signature' });
+	}
+});
+
+test('malformed signature headers always return 401 without throwing', async () => {
+	const body = { event: 'leave.created' };
+	const raw = Buffer.from(JSON.stringify(body));
+	const unicode = 'sha256=' + 'é'.repeat(64);
+	assert.equal(unicode.length, sign('whsec_test', raw).length, 'same JS character length');
+	assert.notEqual(Buffer.byteLength(unicode), Buffer.byteLength(sign('whsec_test', raw)), 'different byte length must never reach timingSafeEqual');
+	for (const signature of [unicode, ['sha256=' + '0'.repeat(64)], 71, {}, 'sha256=' + '0'.repeat(63), 'sha256=' + '0'.repeat(65), 'sha256=' + 'g'.repeat(64), sign('whsec_test', raw) + '\n']) {
+		const { context, response } = webhookContext({ body, signature });
+		context.getNodeParameter = () => assert.fail('unauthenticated requests must not evaluate event-filter expressions');
+		assert.deepEqual(await new CollabinTrigger().webhook.call(context), { noWebhookResponse: true });
+		assert.equal(response.statusCode, 401);
+	}
 });

@@ -39,7 +39,8 @@
   "n8n": {
     "n8nNodesApiVersion": 1,
     "credentials": [
-      "dist/credentials/CollabinApi.credentials.js"
+      "dist/credentials/CollabinApi.credentials.js",
+      "dist/credentials/CollabinWebhookApi.credentials.js"
     ],
     "nodes": [
       "dist/nodes/Collabin/Collabin.node.js",

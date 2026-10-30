@@ -27,7 +27,8 @@ export class CollabinTrigger implements INodeType {
 		name: 'collabinTrigger',
 		icon: 'file:collabin.svg',
 		group: ['trigger'],
-		version: 1,
+		version: [1, 2],
+		defaultVersion: 2,
 		subtitle: '={{$parameter["events"].join(", ")}}',
 		description: 'Starts the workflow when Collabin sends a webhook event',
 		defaults: {
@@ -35,6 +36,12 @@ export class CollabinTrigger implements INodeType {
 		},
 		inputs: [],
 		outputs: ['main'],
+		credentials: [
+			{
+				name: 'collabinWebhookApi',
+				required: true,
+			},
+		],
 		webhooks: [
 			{
 				name: 'default',
@@ -47,20 +54,28 @@ export class CollabinTrigger implements INodeType {
 		properties: [
 			{
 				displayName:
-					'Create a webhook in your Collabin dashboard under Settings → Webhooks pointing to the URL below, subscribed to the events you want. Paste the signing secret shown there into "Signing Secret" below.',
+					'Create a webhook in your Collabin dashboard under Settings → Webhooks pointing to the URL below, subscribed to the events you want. Save its signing secret in a Collabin Webhook API credential and select that credential above.',
 				name: 'notice',
 				type: 'notice',
 				default: '',
 			},
 			{
-				displayName: 'Signing Secret',
+				displayName:
+					'This older trigger must be migrated before it can receive events. Rotate the webhook in Collabin, save the new secret in a Collabin Webhook API credential, and clear the Legacy Signing Secret below. The webhook URL and workflow output stay the same. See the upgrade guide in the credential documentation.',
+				name: 'credentialMigrationNotice',
+				type: 'notice',
+				default: '',
+				displayOptions: { show: { '@version': [1] } },
+			},
+			{
+				displayName: 'Legacy Signing Secret',
 				name: 'signingSecret',
 				type: 'string',
 				typeOptions: { password: true },
 				default: '',
-				required: true,
+				displayOptions: { show: { '@version': [1] } },
 				description:
-					'The signing secret shown when the webhook was created in the Collabin dashboard. Used to verify the "X-Collabin-Signature" header (HMAC-SHA256) of every incoming request.',
+					'Clear this field after migrating to a Collabin Webhook API credential. A non-empty value blocks the trigger; it is never used for authentication.',
 			},
 			{
 				displayName: 'Events',
@@ -79,28 +94,53 @@ export class CollabinTrigger implements INodeType {
 		const headers = this.getHeaderData() as IDataObject;
 		const res = this.getResponseObject();
 
-		const signingSecret = this.getNodeParameter('signingSecret') as string;
-		const events = this.getNodeParameter('events') as string[];
+		// Old parameters survive node upgrades and exports. Never silently use
+		// or ignore a populated legacy secret, including on an upgraded v2 node.
+		const legacySecret = this.getNode().parameters.signingSecret;
+		if (legacySecret !== undefined && legacySecret !== '') {
+			res.status(401).json({
+				message: 'Webhook credential migration required; clear the legacy Signing Secret',
+			});
+			return { noWebhookResponse: true };
+		}
 
-		const signatureHeader = (headers['x-collabin-signature'] as string | undefined) ?? '';
+		let signingSecret: unknown;
+		try {
+			const credentials = await this.getCredentials('collabinWebhookApi');
+			signingSecret = credentials.signingSecret;
+		} catch {
+			// A missing/unavailable credential cannot fall back to workflow data.
+			res.status(401).json({ message: 'Missing or unconfigured webhook signature' });
+			return { noWebhookResponse: true };
+		}
+
+		const signatureHeader = headers['x-collabin-signature'];
 		const rawBody = req.rawBody;
 
-		if (!signingSecret || !signatureHeader || !rawBody) {
+		if (typeof signingSecret !== 'string' || !signingSecret || !signatureHeader || !rawBody) {
 			res.status(401).json({ message: 'Missing or unconfigured webhook signature' });
 			return { noWebhookResponse: true };
 		}
 
 		const expectedSignature = `sha256=${createHmac('sha256', signingSecret).update(rawBody).digest('hex')}`;
 
+		// Validate the ASCII wire format before comparing bytes. JS character
+		// length alone does not protect timingSafeEqual from unequal byte lengths.
 		const signatureIsValid =
+			typeof signatureHeader === 'string' &&
 			signatureHeader.length === expectedSignature.length &&
-			timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(expectedSignature));
+			/^sha256=[0-9a-f]{64}$/.test(signatureHeader) &&
+			timingSafeEqual(
+				Buffer.from(signatureHeader, 'ascii'),
+				Buffer.from(expectedSignature, 'ascii'),
+			);
 
 		if (!signatureIsValid) {
 			res.status(401).json({ message: 'Invalid webhook signature' });
 			return { noWebhookResponse: true };
 		}
 
+		const events = this.getNodeParameter('events') as string[];
 		const bodyData = this.getBodyData() as IDataObject;
 		const event = bodyData.event as string | undefined;
 

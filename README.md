@@ -13,6 +13,7 @@ It lets you manage leave requests, users, teams and the workday calendar via the
 | **Collabin** | Action node | CRUD/read access to Users, Teams, Leave Types, Leaves and the Calendar via `/v1`. Also usable as a tool by AI Agent nodes. |
 | **Collabin Trigger** | Trigger node | Starts a workflow when Collabin sends a webhook (`leave.created`, `leave.status_changed`), with built-in `X-Collabin-Signature` verification. |
 | **Collabin API** | Credentials | Stores your API key and base URL, used by the **Collabin** node. |
+| **Collabin Webhook API** | Credentials | Stores the webhook signing secret encrypted in n8n, used by **Collabin Trigger**. Workflow exports contain only its name and ID. |
 
 ## Installation
 
@@ -78,8 +79,20 @@ The trigger node receives outbound webhooks from Collabin and starts the workflo
 3. In the Collabin dashboard, go to **Settings → Webhooks** and create a new webhook:
    - **URL**: paste the n8n webhook URL from step 2.
    - **Events**: subscribe to the events you care about (`leave.created`, `leave.status_changed`).
-4. Collabin shows a **signing secret** once, when the webhook is created. Copy it into the node's **Signing Secret** field.
+4. Collabin shows a **signing secret** once, when the webhook is created. Create a **Collabin Webhook API** credential in n8n, save the secret in its **Signing Secret** field, and select this credential on the trigger. Keep the secret out of node parameters, workflow JSON, and shared examples.
 5. In the node's **Events** field, select which event types should start the workflow. This is a local filter — make sure it matches (or is a subset of) what the webhook in Collabin is subscribed to.
+
+### Upgrading existing triggers
+
+This security update requires an explicit migration for triggers that stored a **Signing Secret** directly in the node. That value was included in workflow exports and history. Both supported trigger versions now require a **Collabin Webhook API** credential. n8n may prevent activation until this credential is configured; the trigger itself rejects a populated legacy parameter with `401` and a migration message. There is no fallback to the old parameter.
+
+1. Schedule a short maintenance window and disable the old webhook in **Collabin → Settings → Webhooks**. Record the existing production webhook URL and selected events. Collabin does not retry missed webhook deliveries automatically; reconcile changes from this window afterward with **Leave → Get Many → Updated Since → Return All**.
+2. Update this package and restart n8n. The existing version 1 trigger remains recognizable and keeps its webhook URL, event selection, and output shape.
+3. Create a replacement webhook in Collabin with the same URL and events to generate a **new signing secret**. Keep the old webhook disabled. Rotate the secret even if you have never deliberately shared the workflow: old exports and workflow history can retain its previous value.
+4. Save the new secret in a **Collabin Webhook API** credential, then select that credential on the existing trigger. Clear the **Legacy Signing Secret** field, save the workflow, and activate it. The legacy value must be empty even when a credential is selected.
+5. Verify a test event and reconcile the maintenance window. New triggers use version 2, which has no signing-secret parameter. A migrated version 1 trigger is also safe to keep; clear its legacy field before upgrading its node version. If replacing the trigger instead, use the replacement node's production URL in the new Collabin webhook.
+
+This package cannot rotate a Collabin webhook or rewrite existing workflow history on your behalf. Merely masking the old field or upgrading the node version does not remove secrets from earlier exports. The new credential must not reuse the exported secret.
 
 ### Signature verification
 
@@ -91,7 +104,7 @@ Every delivery includes:
 | `X-Collabin-Signature` | `sha256=<hex>` — HMAC-SHA256 of the raw request body, keyed with the webhook's signing secret |
 | `X-Collabin-Delivery` | A unique delivery ID |
 
-The node recomputes this HMAC over the raw body and compares it (constant-time) to the `X-Collabin-Signature` header. Requests with a missing or invalid signature receive `401 Unauthorized` and **never** trigger the workflow — this happens before any node parameters or downstream nodes run.
+The node reads the signing key from its encrypted credential, recomputes this HMAC over the raw body, and compares it (constant-time) to the `X-Collabin-Signature` header. Requests with a missing or invalid signature receive `401 Unauthorized` and **never** trigger the workflow. Signature verification happens before resolving the event-filter parameter or running downstream nodes.
 
 ### Payload shape
 
@@ -131,6 +144,7 @@ The node recomputes this HMAC over the raw body and compares it (constant-time) 
 ## Compatibility
 
 - Node.js >= 20.15
+- Collabin Trigger versions 1 and 2 are supported; version 2 is the default. Both require **Collabin Webhook API** credentials. Existing plaintext-secret triggers require the explicit [upgrade steps](#upgrading-existing-triggers) above.
 - Collabin API version: **v1.4** (notifications for leave created or decided through the API, with the `notify` switch); v1.3 and earlier keep working, but they send no notifications and ignore **Send Notifications**
 
 ## Development
