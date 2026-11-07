@@ -10,14 +10,30 @@ import type {
 
 const EVENT_OPTIONS = [
 	{
+		name: 'Presence Created',
+		value: 'presence.created',
+		description: 'Triggered when a mandatory presence rule is created',
+	},
+	{
+		name: 'Presence Updated',
+		value: 'presence.updated',
+		description: 'Triggered when a mandatory presence rule changes, including its request policy',
+	},
+	{
+		name: 'Presence Revoked',
+		value: 'presence.revoked',
+		description: 'Triggered when a mandatory presence rule is revoked',
+	},
+	{
 		name: 'Leave Created',
 		value: 'leave.created',
-		description: 'Triggered when a new leave request is created (status PENDING)',
+		description: 'Triggered when a new leave request is created',
 	},
 	{
 		name: 'Leave Status Changed',
 		value: 'leave.status_changed',
-		description: 'Triggered when a leave request is approved or rejected',
+		description:
+			'Triggered when a leave request is approved, rejected, withdrawn, or its cancellation status changes',
 	},
 ];
 

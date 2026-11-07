@@ -11,7 +11,7 @@ It lets you manage leave requests, users, teams and the workday calendar via the
 | Item | Type | Description |
 |---|---|---|
 | **Collabin** | Action node | CRUD/read access to Users, Teams, Leave Types, Leaves and the Calendar via `/v1`. Also usable as a tool by AI Agent nodes. |
-| **Collabin Trigger** | Trigger node | Starts a workflow when Collabin sends a webhook (`leave.created`, `leave.status_changed`), with built-in `X-Collabin-Signature` verification. |
+| **Collabin Trigger** | Trigger node | Starts a workflow when Collabin sends a webhook (`leave.created`, `leave.status_changed`, `presence.created`, `presence.updated`, `presence.revoked`), with built-in `X-Collabin-Signature` verification. |
 | **Collabin API** | Credentials | Stores your API key and base URL, used by the **Collabin** node. |
 | **Collabin Webhook API** | Credentials | Stores the webhook signing secret encrypted in n8n, used by **Collabin Trigger**. Workflow exports contain only its name and ID. |
 
@@ -46,7 +46,7 @@ Use the **Test** button to verify the credential — it calls `GET /v1/leave-typ
 
 ## Operations (Collabin node)
 
-Every "Get Many" operation supports:
+User, Team, Leave Type and Leave "Get Many" operations support:
 - **Return All** — automatically pages through the API (500 items per request) and returns every result.
 - **Limit** — returns up to a fixed number of results (max `500`, default `50`).
 
@@ -62,11 +62,33 @@ Every "Get Many" operation supports:
 | Leave | Get Many | `GET /v1/leaves` | Read | Filters: User ID, Status, Start/End Date, Updated Since (for incremental sync) |
 | Leave | Create | `POST /v1/leaves` | **Write** | Creates a request with status `PENDING`; only the calendar dates are used. Returns `422 QUOTA_EXCEEDED` when a blocking leave quota would be exceeded. Notifies the approvers unless **Send Notifications** is off |
 | Leave | Update Status | `PUT /v1/leaves/:id/status` | **Write** | Approve or reject a `PENDING` request; returns `409` if it isn't pending. Notifies the employee unless **Send Notifications** is off |
+| Presence Rule | Get Many | `GET /v1/presence-rules` | Read | Returns every rule, including past and revoked rules; this endpoint is not paginated |
+| Presence Rule | Preview | `POST /v1/presence-rules/preview` | **Write** | Shows affected employees without saving or sending mail |
+| Presence Rule | Create | `POST /v1/presence-rules` | **Write** | Creates the rule and queues mandatory operational notifications |
+| Presence Rule | Update | `PUT /v1/presence-rules/:id` | **Write** | Full rule replacement; requires the reviewed revision |
+| Presence Rule | Revoke | `POST /v1/presence-rules/:id/revoke` | **Write** | Requires the reviewed revision |
 | Calendar | Get | `GET /v1/calendar` | Read | Workday/holiday calendar for a date range (max 366 days) |
 
 Operations marked **Write** require an API key with Read & Write permission, otherwise the API returns `403 Forbidden`.
 
 **Send Notifications** (Leave → Create and Update Status, on by default): Collabin notifies the people involved, as for a request made in Collabin. The approvers are told about a new request, and the employee about a decision. Each person gets an in-app notification and an e-mail only if they turned that kind of notification on in their profile. The e-mail names your API key as the one who decided. Turn it off, for example, when importing past leave, so nobody is flooded with messages.
+
+## Mandatory presence (requires the presence-enabled backend release)
+
+The new Presence Rule operations and presence trigger events require the backend with `/v1/presence-rules`; earlier backends keep supporting the existing operations. This source update must be built and installed in n8n before these controls appear.
+
+Presence is available on **Advanced and Pro**, even with approvals disabled. External API and webhook entitlements are separate: normally **Pro**, or an explicit Superadmin override. An API override alone does not unlock presence on a lower plan.
+
+1. Use **Team → Get Many** and **Leave Type → Get Many** to find the scope IDs.
+2. Select **Presence Rule → Preview**, enter the dates, affected type IDs and team IDs, or explicitly enable **Entire Organization**.
+3. Choose **Warn** (requests allowed) or **Block** (new/edited requests rejected with `422 PRESENCE_BLOCKED`). Existing requests stay unchanged.
+4. Review the affected employees, then use **Create** or **Update** with the same fields. Updates and revocations require `revision` from **Get Many**. `409 PRESENCE_CHANGED` means someone changed the rule; fetch it again and review before retrying.
+
+Operational presence e-mails are mandatory and ignore general notification preferences. The leave **Send Notifications** switch does not disable them. Empty team IDs are rejected unless **Entire Organization** is explicitly on.
+
+For a pending leave with presence conflicts, **Leave → Get** returns `presence_check.conflicts` and `presence_check.token`. Present the conflicts to the decision-maker, then pass the explicitly reviewed token in **Update Status → Presence Token**. Copy `updated_at` unchanged into **Expected Updated At**, including fractional seconds, to detect intervening request edits. Do not fetch a fresh token and automatically approve after a `409`: the changed conflict requires a new review. Rejections do not require a presence token.
+
+Leave list filters also support `WITHDRAWN`, `CANCELLATION_REQUESTED` and `CANCELLED`; Update Status still only approves/rejects `PENDING` requests.
 
 ## Collabin Trigger node
 
@@ -78,7 +100,7 @@ The trigger node receives outbound webhooks from Collabin and starts the workflo
 2. Open the node and copy its **Webhook URL** (use the "Test URL" while building the workflow, and the "Production URL" once the workflow is active).
 3. In the Collabin dashboard, go to **Settings → Webhooks** and create a new webhook:
    - **URL**: paste the n8n webhook URL from step 2.
-   - **Events**: subscribe to the events you care about (`leave.created`, `leave.status_changed`).
+   - **Events**: subscribe to the events you care about (`leave.created`, `leave.status_changed`, `presence.created`, `presence.updated`, `presence.revoked`).
 4. Collabin shows a **signing secret** once, when the webhook is created. Create a **Collabin Webhook API** credential in n8n, save the secret in its **Signing Secret** field, and select this credential on the trigger. Keep the secret out of node parameters, workflow JSON, and shared examples.
 5. In the node's **Events** field, select which event types should start the workflow. This is a local filter — make sure it matches (or is a subset of) what the webhook in Collabin is subscribed to.
 
@@ -125,14 +147,17 @@ The node reads the signing key from its encrypted credential, recomputes this HM
 }
 ```
 
-`data` mirrors the corresponding object from the `/v1` API (e.g. the same shape as `GET /v1/leaves/:id`).
+`data` contains the leave object for leave events (as in `GET /v1/leaves/:id`), or the presence rule for presence events. Presence rules include `request_policy`, `revision`, scope IDs and `revoked_at`. Leave objects include `presence_check` when the feature is available.
 
 ### Currently supported events
 
 | Event | Fired when |
 |---|---|
-| `leave.created` | A new leave request is created (status `PENDING`) |
-| `leave.status_changed` | A leave request is approved or rejected |
+| `leave.created` | A new leave request is created (may already be auto-approved in the dashboard) |
+| `leave.status_changed` | A leave request is approved, rejected, withdrawn, or its cancellation status changes |
+| `presence.created` | A mandatory presence rule is created |
+| `presence.updated` | A mandatory presence rule changes (including policy or scope) |
+| `presence.revoked` | A mandatory presence rule is revoked |
 
 ## Example workflows
 

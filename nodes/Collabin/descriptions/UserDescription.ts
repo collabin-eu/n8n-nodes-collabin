@@ -170,9 +170,12 @@ export const userFields: INodeProperties[] = [
 				type: 'options',
 				default: 'PENDING',
 				options: [
-					{ name: 'Pending', value: 'PENDING' },
 					{ name: 'Approved', value: 'APPROVED' },
+					{ name: 'Cancellation Requested', value: 'CANCELLATION_REQUESTED' },
+					{ name: 'Cancelled', value: 'CANCELLED' },
+					{ name: 'Pending', value: 'PENDING' },
 					{ name: 'Rejected', value: 'REJECTED' },
+					{ name: 'Withdrawn', value: 'WITHDRAWN' },
 				],
 				description: 'Filter leaves by status',
 			},

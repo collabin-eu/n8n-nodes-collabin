@@ -115,7 +115,7 @@ test('sends leave filters as calendar dates and updated_since as RFC 3339', asyn
 		returnAll: false,
 		limit: 50,
 		filters: { start: '2026-04-06T00:00:00', end: '2026-04-30T00:00:00', updated_since: '2026-04-01T08:00:00', status: 'PENDING' },
-	}, { respond: () => ({ data: [] }) });
+	}, { respond: () => ({ data: [], rules: [] }) });
 	assert.deepEqual(requests[0].qs, { start: '2026-04-06', end: '2026-04-30', updated_since: '2026-04-01T06:00:00.000Z', status: 'PENDING', limit: 50 });
 
 	const all = await run({ resource: 'leave', operation: 'getAll', returnAll: true, filters: {} }, { respond: () => ({ data: [], total: 0 }) });
@@ -193,14 +193,14 @@ test('routes every operation offered in the node description', async () => {
 		.flatMap((property) => property.displayOptions.show.resource.flatMap((resource) => property.options.map((option) => [resource, option.value])));
 	assert.ok(pairs.length >= 10);
 	for (const [resource, operation] of pairs) {
-		const params = { resource, operation, returnAll: false, limit: 1, filters: {}, additionalFields: {}, userId: 1, teamId: 1, leaveId: 1, leaveTypeId: 1, status: 'APPROVED', startDate: '2026-04-06', endDate: '2026-04-06' };
-		const { requests } = await run(params, { respond: () => ({ data: [] }) });
+		const params = { resource, operation, ruleId: 7, revision: 2, title: 'Workshop', teamIds: '7', leaveTypeIds: '3', returnAll: false, limit: 1, filters: {}, additionalFields: {}, userId: 1, teamId: 1, leaveId: 1, leaveTypeId: 1, status: 'APPROVED', startDate: '2026-04-06', endDate: '2026-04-06' };
+		const { requests } = await run(params, { respond: () => ({ data: [], rules: [] }) });
 		assert.equal(requests.length, 1, `${resource}.${operation}`);
 	}
 });
 
 test('rejects unknown resources and operations', async () => {
-	for (const resource of ['user', 'team', 'leaveType', 'leave', 'calendar']) {
+	for (const resource of ['user', 'team', 'leaveType', 'leave', 'calendar', 'presence']) {
 		await assert.rejects(run({ resource, operation: 'explode' }), new RegExp(`Unknown operation "explode" for resource "${resource}"`));
 	}
 	await assert.rejects(run({ resource: 'invoice', operation: 'get' }), /Unknown resource "invoice"/);
@@ -330,7 +330,7 @@ test('skips events the workflow did not subscribe to', async () => {
 
 test('offers exactly the webhook events Collabin sends', () => {
 	const events = new CollabinTrigger().description.properties.find((property) => property.name === 'events');
-	assert.deepEqual(events.options.map((option) => option.value), ['leave.created', 'leave.status_changed']);
+	assert.deepEqual(events.options.map((option) => option.value).sort(), ['leave.created', 'leave.status_changed', 'presence.created', 'presence.revoked', 'presence.updated']);
 	assert.deepEqual(events.default, ['leave.created', 'leave.status_changed']);
 });
 
@@ -404,4 +404,87 @@ test('malformed signature headers always return 401 without throwing', async () 
 		assert.deepEqual(await new CollabinTrigger().webhook.call(context), { noWebhookResponse: true });
 		assert.equal(response.statusCode, 401);
 	}
+});
+
+
+test('passes the explicitly reviewed presence token and exact optimistic timestamp on approval', async () => {
+    const reviewed = { presenceToken: 'reviewed-token', expectedUpdatedAt: '2031-03-01T12:00:00.123456789Z' };
+    const { requests } = await run({ resource: 'leave', operation: 'updateStatus', leaveId: 8, status: 'APPROVED', ...reviewed });
+    assert.deepEqual(requests[0].body, { status: 'APPROVED', presence_token: reviewed.presenceToken, expected_updated_at: reviewed.expectedUpdatedAt });
+    assert.equal(requests.length, 1, 'must never fetch a token and silently approve a conflict');
+    const rejected = await run({ resource: 'leave', operation: 'updateStatus', leaveId: 8, status: 'REJECTED', ...reviewed });
+    assert.equal(rejected.requests[0].body.presence_token, undefined);
+    assert.equal(rejected.requests[0].body.expected_updated_at, reviewed.expectedUpdatedAt);
+});
+
+const presenceParams = { resource: 'presence', title: 'Workshop', reason: 'Planning', startDate: '2031-03-03T00:00:00+01:00', endDate: '2031-03-04T00:00:00+01:00', teamIds: '7,8,7', leaveTypeIds: '3,4', requestPolicy: 'BLOCK', ruleId: 9, revision: 2 };
+
+test('reads the non-paginated presence rules envelope without losing policies or revisions', async () => {
+    const rules = [{ id: 9, request_policy: 'BLOCK', revision: 3 }, { id: 10, revoked_at: '2031-01-01T12:00:00Z' }];
+    const { output, requests } = await run({ resource: 'presence', operation: 'getAll' }, { respond: () => ({ rules, teams: [], timezone: 'Europe/Budapest' }) });
+    assert.deepEqual(output.map(item => item.json), rules);
+    assert.equal(requests[0].url, 'https://api.collabin.test/v1/presence-rules');
+    assert.equal(requests[0].qs, undefined);
+    assert.equal(requests.length, 1);
+});
+
+test('creates, previews and updates presence rules with explicit scope and policy', async () => {
+    for (const operation of ['create', 'preview', 'update']) {
+        const { requests } = await run({ ...presenceParams, operation });
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].method, operation === 'update' ? 'PUT' : 'POST');
+        assert.equal(requests[0].url, 'https://api.collabin.test/v1/presence-rules' + (operation === 'preview' ? '/preview' : operation === 'update' ? '/9' : ''));
+        assert.deepEqual(requests[0].body, { title: 'Workshop', reason: 'Planning', start_date: '2031-03-03', end_date: '2031-03-04', team_ids: [7, 8], leave_type_ids: [3, 4], request_policy: 'BLOCK', ...(operation === 'update' ? { revision: 2 } : {}) });
+    }
+});
+
+test('requires explicit organization scope and accepts numeric ID arrays from expressions', async () => {
+    const { requests } = await run({ ...presenceParams, operation: 'create', organization: true, teamIds: 'invalid hidden field', leaveTypeIds: [3, 4], requestPolicy: undefined });
+    assert.deepEqual(requests[0].body.team_ids, []);
+    assert.deepEqual(requests[0].body.leave_type_ids, [3, 4]);
+    assert.equal(requests[0].body.request_policy, 'WARN');
+    for (const field of ['teamIds', 'leaveTypeIds']) {
+        for (const value of ['', [], '0', '-1', '1.5', '1,', 'NaN', '1e2', '9007199254740992']) {
+            const context = executeContext({ ...presenceParams, operation: 'create', [field]: value });
+            await assert.rejects(new Collabin().execute.call(context), /positive integer IDs/);
+            assert.equal(context.requests.length, 0);
+        }
+    }
+});
+
+test('revokes only the reviewed revision and preserves per-item requests and outputs', async () => {
+    const { requests, output } = await run((name, i) => ({ resource: 'presence', operation: 'revoke', ruleId: i + 9, revision: i + 2 })[name], { items: [{ json: {} }, { json: {} }], respond: options => ({ revision: options.body.revision + 1 }) });
+    assert.deepEqual(requests.map(r => [r.method, r.url, r.body]), [
+        ['POST', 'https://api.collabin.test/v1/presence-rules/9/revoke', { revision: 2 }],
+        ['POST', 'https://api.collabin.test/v1/presence-rules/10/revoke', { revision: 3 }],
+    ]);
+    assert.deepEqual(output.map(item => item.pairedItem), [{ item: 0 }, { item: 1 }]);
+});
+
+test('surfaces presence conflicts without automatic retry or approval', async () => {
+    for (const code of ['PRESENCE_BLOCKED', 'PRESENCE_CHANGED']) {
+        const context = executeContext({ ...presenceParams, operation: 'update' }, { respond: () => { throw Object.assign(new Error(code), { httpCode: code === 'PRESENCE_BLOCKED' ? '422' : '409', message: code }); } });
+        await assert.rejects(new Collabin().execute.call(context));
+        assert.equal(context.requests.length, 1);
+    }
+});
+
+test('receives all signed presence events with the complete payload and filters unselected events', async () => {
+    for (const event of ['presence.created', 'presence.updated', 'presence.revoked']) {
+        const body = { event, organization_id: 1, data: { id: 9, revision: 3, request_policy: 'BLOCK', team_ids: [7], leave_type_ids: [3] } };
+        const signature = sign('whsec_test', JSON.stringify(body));
+        const subscribed = webhookContext({ body, signature, events: [event] });
+        assert.deepEqual(await new CollabinTrigger().webhook.call(subscribed.context), { workflowData: [[{ json: body }]] });
+        const filtered = webhookContext({ body, signature, events: ['leave.created'] });
+        assert.deepEqual(await new CollabinTrigger().webhook.call(filtered.context), {});
+        const forged = webhookContext({ body, signature: sign('wrong', JSON.stringify(body)), events: [event] });
+        assert.deepEqual(await new CollabinTrigger().webhook.call(forged.context), { noWebhookResponse: true });
+        assert.equal(forged.response.statusCode, 401);
+    }
+});
+
+test('exposes cancellation lifecycle statuses in both leave list filters', () => {
+    const filters = new Collabin().description.properties.filter(p => p.name === 'filters' && p.options.some(o => o.name === 'status'));
+    assert.equal(filters.length, 2);
+    for (const filter of filters) assert.deepEqual(filter.options.find(o => o.name === 'status').options.map(o => o.value).sort(), ['APPROVED', 'CANCELLATION_REQUESTED', 'CANCELLED', 'PENDING', 'REJECTED', 'WITHDRAWN']);
 });

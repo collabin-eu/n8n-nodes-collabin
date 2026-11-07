@@ -10,11 +10,13 @@ import { NodeOperationError } from 'n8n-workflow';
 import { calendarFields, calendarOperations } from './descriptions/CalendarDescription';
 import { leaveFields, leaveOperations } from './descriptions/LeaveDescription';
 import { leaveTypeFields, leaveTypeOperations } from './descriptions/LeaveTypeDescription';
+import { presenceFields, presenceOperations } from './descriptions/PresenceDescription';
 import { teamFields, teamOperations } from './descriptions/TeamDescription';
 import { userFields, userOperations } from './descriptions/UserDescription';
 import {
 	collabinApiRequest,
 	collabinApiRequestAllItems,
+	parsePresenceIds,
 	toDateOnly,
 	toLeaveDay,
 	toRfc3339,
@@ -52,6 +54,7 @@ export class Collabin implements INodeType {
 					{ name: 'Calendar', value: 'calendar' },
 					{ name: 'Leave', value: 'leave' },
 					{ name: 'Leave Type', value: 'leaveType' },
+					{ name: 'Presence Rule', value: 'presence' },
 					{ name: 'Team', value: 'team' },
 					{ name: 'User', value: 'user' },
 				],
@@ -69,6 +72,9 @@ export class Collabin implements INodeType {
 
 			...leaveOperations,
 			...leaveFields,
+
+			...presenceOperations,
+			...presenceFields,
 
 			...calendarOperations,
 			...calendarFields,
@@ -252,6 +258,11 @@ export class Collabin implements INodeType {
 						const rejectionReason = this.getNodeParameter('rejectionReason', i, '') as string;
 
 						const body: IDataObject = { status };
+						const presenceToken = this.getNodeParameter('presenceToken', i, '') as string;
+						const expectedUpdatedAt = this.getNodeParameter('expectedUpdatedAt', i, '') as string;
+						if (status === 'APPROVED' && presenceToken) body.presence_token = presenceToken;
+						// Preserve fractional-second precision from the API; Date would truncate it.
+						if (expectedUpdatedAt) body.expected_updated_at = expectedUpdatedAt;
 						if (status === 'REJECTED') {
 							body.rejection_reason = rejectionReason;
 						}
@@ -272,6 +283,53 @@ export class Collabin implements INodeType {
 							{
 								itemIndex: i,
 							},
+						);
+					}
+				} else if (resource === 'presence') {
+					if (operation === 'getAll') {
+						const response = await collabinApiRequest.call(this, 'GET', '/presence-rules');
+						responseData = response.rules as IDataObject[];
+					} else if (operation === 'revoke') {
+						const ruleId = this.getNodeParameter('ruleId', i) as number;
+						responseData = await collabinApiRequest.call(
+							this,
+							'POST',
+							`/presence-rules/${ruleId}/revoke`,
+							{ revision: this.getNodeParameter('revision', i) as number },
+						);
+					} else if (['create', 'preview', 'update'].includes(operation)) {
+						const organization = this.getNodeParameter('organization', i, false) as boolean;
+						const body: IDataObject = {
+							title: this.getNodeParameter('title', i) as string,
+							reason: this.getNodeParameter('reason', i, '') as string,
+							start_date: toDateOnly(this.getNodeParameter('startDate', i)),
+							end_date: toDateOnly(this.getNodeParameter('endDate', i)),
+							request_policy: this.getNodeParameter('requestPolicy', i, 'WARN') as string,
+							team_ids: organization
+								? []
+								: parsePresenceIds(this.getNodeParameter('teamIds', i, ''), 'Team IDs'),
+							leave_type_ids: parsePresenceIds(
+								this.getNodeParameter('leaveTypeIds', i, ''),
+								'Leave Type IDs',
+							),
+						};
+						let endpoint = '/presence-rules';
+						if (operation === 'preview') endpoint += '/preview';
+						if (operation === 'update') {
+							endpoint += `/${this.getNodeParameter('ruleId', i)}`;
+							body.revision = this.getNodeParameter('revision', i) as number;
+						}
+						responseData = await collabinApiRequest.call(
+							this,
+							operation === 'update' ? 'PUT' : 'POST',
+							endpoint,
+							body,
+						);
+					} else {
+						throw new NodeOperationError(
+							this.getNode(),
+							`Unknown operation "${operation}" for resource "presence"`,
+							{ itemIndex: i },
 						);
 					}
 				} else if (resource === 'calendar') {

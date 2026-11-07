@@ -28,7 +28,7 @@ export const leaveOperations: INodeProperties[] = [
 				name: 'Create',
 				value: 'create',
 				description:
-					'Create a new leave request (status PENDING). Requires a write-permission API key. Fails with 422 QUOTA_EXCEEDED when a blocking leave quota would be exceeded.',
+					'Create a new leave request (status PENDING). Requires a write-permission API key. Fails with 422 QUOTA_EXCEEDED when a blocking leave quota would be exceeded, or 422 PRESENCE_BLOCKED when mandatory presence blocks the request.',
 				action: 'Create a leave',
 			},
 			{
@@ -44,6 +44,28 @@ export const leaveOperations: INodeProperties[] = [
 ];
 
 export const leaveFields: INodeProperties[] = [
+	{
+		displayName: 'Presence Token',
+		name: 'presenceToken',
+		type: 'string',
+		typeOptions: { password: true },
+		default: '',
+		displayOptions: {
+			show: { resource: ['leave'], operation: ['updateStatus'], status: ['APPROVED'] },
+		},
+		description:
+			'Copy presence_check.token from Leave → Get after explicitly reviewing its conflicts. Required for approval of a conflicting request; 409 PRESENCE_CHANGED means it must be reviewed again. Do not automatically approve conflicts.',
+	},
+	{
+		displayName: 'Expected Updated At',
+		name: 'expectedUpdatedAt',
+		type: 'string',
+		default: '',
+		displayOptions: { show: { resource: ['leave'], operation: ['updateStatus'] } },
+		description:
+			'Copy the exact updated_at from the reviewed request to reject a decision if the request changed. Preserve the original timestamp, including fractional seconds.',
+	},
+
 	// ----------------------------------------
 	//          leave: get / updateStatus
 	// ----------------------------------------
@@ -128,9 +150,12 @@ export const leaveFields: INodeProperties[] = [
 				type: 'options',
 				default: 'PENDING',
 				options: [
-					{ name: 'Pending', value: 'PENDING' },
 					{ name: 'Approved', value: 'APPROVED' },
+					{ name: 'Cancellation Requested', value: 'CANCELLATION_REQUESTED' },
+					{ name: 'Cancelled', value: 'CANCELLED' },
+					{ name: 'Pending', value: 'PENDING' },
 					{ name: 'Rejected', value: 'REJECTED' },
+					{ name: 'Withdrawn', value: 'WITHDRAWN' },
 				],
 				description: 'Only return leave requests with this status',
 			},
@@ -230,7 +255,7 @@ export const leaveFields: INodeProperties[] = [
 				type: 'boolean',
 				default: false,
 				description:
-					'Whether this is a half-day (AM/PM) request. A half day must start and end on the same day.',
+					'Whether this is a half-day request. A half day must start and end on the same day.',
 			},
 			{
 				displayName: 'Reason',

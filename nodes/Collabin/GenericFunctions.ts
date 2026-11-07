@@ -175,3 +175,19 @@ export function toRfc3339(value: unknown, timeZone: string): string {
 	const firstGuess = wallClock - timeZoneOffset(wallClock, timeZone);
 	return new Date(wallClock - timeZoneOffset(firstGuess, timeZone)).toISOString();
 }
+
+/** Require explicit positive IDs so an empty team selection cannot become organization-wide. */
+export function parsePresenceIds(value: unknown, field: string): number[] {
+	const values = Array.isArray(value)
+		? value
+		: String(value ?? '')
+				.split(',')
+				.map((part) => part.trim());
+	if (
+		values.length === 0 ||
+		values.some((part) => !/^[1-9]\d*$/.test(String(part)) || !Number.isSafeInteger(Number(part)))
+	) {
+		throw new Error(`${field} must contain positive integer IDs separated by commas`);
+	}
+	return [...new Set(values.map(Number))];
+}
